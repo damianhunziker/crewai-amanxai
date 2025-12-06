@@ -19,9 +19,11 @@
    pip install -r requirements.txt
    ```
 
-4. Ensure a local OpenAI-compatible LLM server is running on `http://localhost:5020/v1` (as configured in `main.py`).
+4. Configure environment variables: Set your `OPENAI_API_KEY` in the `.env` file for cloud LLM usage (if using cloud LLM for agents).
 
-5. Run the script:
+5. Ensure a local OpenAI-compatible LLM server is running on `http://localhost:5020/v1` (as configured in `main.py`).
+
+6. Run the script:
    ```bash
    python main.py
    ```
