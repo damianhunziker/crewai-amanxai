@@ -3,3 +3,4 @@ python-dotenv
 requests
 pydantic
 google-genai
+crewai-tools[mcp]

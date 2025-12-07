@@ -10,11 +10,29 @@ import asyncio
 from typing import Any, Dict, List, Optional, Type
 from crewai.tools import BaseTool
 from pydantic import BaseModel
+from crewai.mcp import MCPServerStdio
+from crewai.hooks import register_before_llm_call_hook, LLMCallHookContext
 
 load_dotenv()
 
 # Add current directory to path for relative imports
 sys.path.insert(0, os.path.dirname(__file__))
+
+# Postfix to append to every user input
+USER_INPUT_POSTFIX = os.getenv("USER_INPUT_POSTFIX", "")
+
+# LLM Hook to append postfix to user messages at LLM call level
+def append_user_postfix(context: LLMCallHookContext) -> None:
+    if USER_INPUT_POSTFIX:
+        # Find the last user message and append postfix
+        for msg in reversed(context.messages):
+            if msg.get("role") == "user":
+                msg["content"] = f"{msg['content']} {USER_INPUT_POSTFIX}"
+                break
+    return None
+
+# Register the global hook
+register_before_llm_call_hook(append_user_postfix)
 
 os.environ.update({
     'NO_PROXY': 'localhost,127.0.0.1',
@@ -27,9 +45,7 @@ chatml_template = """<|im_start|>{role}
 {content}<|im_end|>"""
 
 local_llm = LLM(
-    #model="openai/mistral-7b-instruct-v0.3-q4_k_m",
-    #model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
-    model="openai/Qwen3-4B-Q5_K_M",
+    model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
     api_key="empty",
     base_url="http://localhost:5020/v1"
 )
@@ -214,6 +230,20 @@ researcher = Agent(
     goal="Führe umfassende Recherchen durch und erstelle detaillierte Berichte.",
     backstory="Du bist ein hochqualifizierter Research Analyst mit Zugang zu fortschrittlichen Tools.",
     tools=[EditorTool()],  # Forwards to researcher-poster
+    mcps=[
+        MCPServerStdio(
+            command="/Users/jgtcdghun/.nvm/versions/node/v20.19.2/bin/node",
+            args=["/Users/jgtcdghun/workspace/brave_search/index.js"]
+        ),
+        MCPServerStdio(
+            command="/usr/local/bin/python3",
+            args=["/Users/jgtcdghun/workspace/researcher-poster/mcp-servers/url-reader/server.py"]
+        ),
+        MCPServerStdio(
+            command="/Users/jgtcdghun/.nvm/versions/node/v20.19.2/bin/node",
+            args=["/Users/jgtcdghun/workspace/perplexity-mcp/perplexity-mcp-server/dist/index.js"]
+        )
+    ],
     llm=llm,
     verbose=True,
     allow_delegation=False,
@@ -225,6 +255,20 @@ manager = Agent(
     goal="Koordiniere alle Agenten und verwalte Kundenprojekte effizient.",
     backstory="Du bist der zentrale Manager der Vyftec Webagentur. Du koordinierst alle spezialisierten Agenten. Verwende Tools im korrekten Format: Action: tool_name\nAction Input: {\"param\": \"value\"}",
     tools=[AutonomousBitwardenCLITool()],  # Primary tool for passwords
+    mcps=[
+        MCPServerStdio(
+            command="/Users/jgtcdghun/.nvm/versions/node/v20.19.2/bin/node",
+            args=["/Users/jgtcdghun/workspace/brave_search/index.js"]
+        ),
+        MCPServerStdio(
+            command="/usr/local/bin/python3",
+            args=["/Users/jgtcdghun/workspace/researcher-poster/mcp-servers/url-reader/server.py"]
+        ),
+        MCPServerStdio(
+            command="/Users/jgtcdghun/.nvm/versions/node/v20.19.2/bin/node",
+            args=["/Users/jgtcdghun/workspace/perplexity-mcp/perplexity-mcp-server/dist/index.js"]
+        )
+    ],
     llm=llm,
     verbose=True,
     allow_delegation=True,
