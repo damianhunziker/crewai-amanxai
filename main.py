@@ -12,9 +12,6 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel
 from crewai.mcp import MCPServerStdio
 from crewai.hooks import register_before_llm_call_hook, LLMCallHookContext
-from crewai import BaseLLM
-from openai import OpenAI
-from typing import Union
 
 load_dotenv()
 
@@ -23,42 +20,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # Postfix to append to every user input
 USER_INPUT_POSTFIX = os.getenv("USER_INPUT_POSTFIX", "")
-
-# Custom LLM for local server (bypasses LiteLLM issues)
-class LocalLLM(BaseLLM):
-    def __init__(self, model: str = "Llama-3.2-3B-Instruct-Q4_K_M", temperature: Optional[float] = None):
-        super().__init__(model=model, temperature=temperature)
-        self.client = OpenAI(
-            base_url="http://localhost:5020/v1",
-            api_key="dummy"
-        )
-
-    def call(self, messages: Union[str, List[Dict[str, str]]],
-             tools: Optional[List[dict]] = None,
-             callbacks: Optional[List[Any]] = None,
-             available_functions: Optional[Dict[str, Any]] = None,
-             **kwargs) -> Union[str, Any]:
-
-        if isinstance(messages, str):
-            messages = [{"role": "user", "content": messages}]
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature or 0.7
-        }
-
-        if tools and self.supports_function_calling():
-            payload["tools"] = tools
-
-        response = self.client.chat.completions.create(**payload)
-        return response.choices[0].message.content
-
-    def supports_function_calling(self) -> bool:
-        return True
-
-    def get_context_window_size(self) -> int:
-        return 8192
 
 # LLM Hook to append postfix to user messages at LLM call level
 def append_user_postfix(context: LLMCallHookContext) -> None:
@@ -73,9 +34,6 @@ def append_user_postfix(context: LLMCallHookContext) -> None:
 # Register the global hook
 register_before_llm_call_hook(append_user_postfix)
 
-# Custom LLM for local server
-llm = LocalLLM()
-
 os.environ.update({
     'NO_PROXY': 'localhost,127.0.0.1',
     'HTTP_PROXY': '',
@@ -86,8 +44,30 @@ os.environ.update({
 chatml_template = """<|im_start|>{role}
 {content}<|im_end|>"""
 
-# Custom LLM for local server
-llm = LocalLLM()
+local_llm = LLM(
+    model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
+    api_key="empty",
+    base_url="http://localhost:5020/v1"
+)
+
+cloud_llm_deepseek_chat = LLM(
+    model="deepseek-chat",
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com/v1"
+)
+
+gemini_llm = LLM(
+    model="gemini/gemini-2.5-flash",
+    api_key=os.getenv("GEMINI_API_KEY"),
+    temperature=0.1,
+)
+
+cloud_llm_gpt4 = LLM(
+    model="gpt-4",
+    api_key=os.getenv("OPENAI_API_KEY")
+)
+
+llm = local_llm
 
 embedder = {
     "provider": "openai",
@@ -232,8 +212,8 @@ class AutonomousBitwardenCLITool(BaseTool):
             result = f"Error: {str(e)}"
             tool_logger.error(f"Exception: {str(e)}")
             return result
-        
-        # Create agents
+
+# Create agents
 editor = Agent(
     role="Content Editor Specialist",
     goal="Erstelle hochwertige, plattformspezifische Inhalte für verschiedene Formate.",
@@ -319,7 +299,7 @@ crew = Crew(
     agents=[researcher, editor, manager],
     tasks=[research_task, editor_task, management_task],
     embedder=embedder,
-    memory=True,
+    memory=False,
     verbose=True
 )
 
