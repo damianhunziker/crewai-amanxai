@@ -24,14 +24,22 @@ os.environ.update({
 
 local_llm = LLM(
     model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
-    api_key="dummy",
+    api_key="empty",
     base_url="http://localhost:5020/v1",
 )
 
-cloud_llm = LLM(
+cloud_llm_deepseek_chat = LLM(
+    model="deepseek-chat",
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com/v1"
+)
+
+cloud_llm_gpt4 = LLM(
     model="gpt-4",
     api_key=os.getenv("OPENAI_API_KEY")
 )
+
+llm = local_llm
 
 embedder = {
     "provider": "openai",
@@ -175,10 +183,10 @@ editor = Agent(
     goal="Erstelle hochwertige, plattformspezifische Inhalte für verschiedene Formate.",
     backstory="Du bist ein erfahrener Content-Editor mit Spezialisierung auf verschiedene Plattformen.",
     tools=[EditorTool()],
-    llm=local_llm,  # Cloud for creativity
+    llm=llm,  # Cloud for creativity
     verbose=True,
     allow_delegation=True,
-    memory=True
+    memory=False
 )
 
 researcher = Agent(
@@ -186,10 +194,10 @@ researcher = Agent(
     goal="Führe umfassende Recherchen durch und erstelle detaillierte Berichte.",
     backstory="Du bist ein hochqualifizierter Research Analyst mit Zugang zu fortschrittlichen Tools.",
     tools=[EditorTool()],  # Forwards to researcher-poster
-    llm=local_llm,
+    llm=llm,
     verbose=True,
     allow_delegation=False,
-    memory=True
+    memory=False
 )
 
 manager = Agent(
@@ -197,10 +205,10 @@ manager = Agent(
     goal="Koordiniere alle Agenten und verwalte Kundenprojekte effizient.",
     backstory="Du bist der zentrale Manager der Vyftec Webagentur. Du koordinierst alle spezialisierten Agenten. Verwende Tools im korrekten Format: Action: tool_name\nAction Input: {\"param\": \"value\"}",
     tools=[AutonomousBitwardenCLITool()],  # Primary tool for passwords
-    llm=cloud_llm,
+    llm=llm,
     verbose=True,
     allow_delegation=True,
-    memory=True
+    memory=False
 )
 
 # Create tasks
@@ -227,7 +235,7 @@ crew = Crew(
     agents=[researcher, editor, manager],
     tasks=[research_task, editor_task, management_task],
     embedder=embedder,
-    memory=True,
+    memory=False,
     verbose=True
 )
 
@@ -299,7 +307,7 @@ def chat_with_manager(user_message: str, conversation_manager: ConversationManag
             expected_output="Comprehensive research report with findings and sources.",
             agent=researcher
         )
-        temp_crew = Crew(agents=[researcher], tasks=[task], embedder=embedder, memory=True, verbose=True)
+        temp_crew = Crew(agents=[researcher], tasks=[task], embedder=embedder, memory=False, verbose=True)
     elif any(k in message_lower for k in editor_keywords):
         # Editor task
         task = Task(
@@ -307,7 +315,7 @@ def chat_with_manager(user_message: str, conversation_manager: ConversationManag
             expected_output="High-quality content for the requested format.",
             agent=editor
         )
-        temp_crew = Crew(agents=[editor], tasks=[task], embedder=embedder, memory=True, verbose=True)
+        temp_crew = Crew(agents=[editor], tasks=[task], embedder=embedder, memory=False, verbose=True)
     else:
         # Management task
         task = Task(
@@ -315,7 +323,7 @@ def chat_with_manager(user_message: str, conversation_manager: ConversationManag
             expected_output="Strategic management response with recommendations.",
             agent=manager
         )
-        temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=True, verbose=True)
+        temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=False, verbose=True)
 
     result = temp_crew.kickoff()
     conversation_manager.add_turn("assistant", str(result))
