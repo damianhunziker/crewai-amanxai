@@ -19,15 +19,26 @@
    pip install -r requirements.txt
    ```
 
-4. Configure environment variables: Set your `OPENAI_API_KEY` in the `.env` file for cloud LLM usage (if using cloud LLM for agents).
+4. Configure environment variables in `.env`:
+   - `OPENAI_API_KEY`: For cloud LLM usage
+   - `BITWARDEN_AGENT_EMAIL`: Bitwarden account email
+   - `BITWARDEN_AGENT_PASSWORD`: Bitwarden master password
 
-5. Ensure a local OpenAI-compatible LLM server is running on `http://localhost:5020/v1` (as configured in `main.py`).
+5. Test Bitwarden integration:
+   ```bash
+   python test_bitwarden.py
+   ```
 
-6. Run the script:
+6. Ensure servers are running:
+   - Local LLM server on `http://localhost:5020/v1`
+   - Embedding server on `http://localhost:8001/v1`
+
+7. Run the chat interface:
    ```bash
    python main.py
    ```
 
 ## Notes
-- The `.env` file contains environment variables and is ignored by git.
-- Adjust proxies and API settings in `main.py` or `.env` as needed.
+- The `.env` file contains sensitive data and is ignored by git.
+- Adjust server URLs and ports in `main.py` as needed.
+- The system uses a chat interface for agent interaction.

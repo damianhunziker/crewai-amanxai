@@ -109,6 +109,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Bitwarden session
+.bw_session
+
 # Spyder project settings
 .spyderproject
 .spyproject
