@@ -19,6 +19,8 @@
    pip install -r requirements.txt
    ```
 
+**Note:** The project uses a custom LLM implementation to bypass LiteLLM compatibility issues with local servers.
+
 4. Configure environment variables in `.env`:
    - `OPENAI_API_KEY`: For cloud LLM usage
    - `DEEPSEEK_API_KEY`: For DeepSeek LLM usage
