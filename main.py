@@ -6,6 +6,7 @@ import subprocess
 import logging
 import sys
 import json
+import asyncio
 from typing import Any, Dict, List, Optional, Type
 from crewai.tools import BaseTool
 from pydantic import BaseModel
@@ -22,16 +23,27 @@ os.environ.update({
     'OPENAI_API_BASE': 'http://localhost:5020/v1'
 })
 
+chatml_template = """<|im_start|>{role}
+{content}<|im_end|>"""
+
 local_llm = LLM(
-    model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
+    #model="openai/mistral-7b-instruct-v0.3-q4_k_m",
+    #model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
+    model="openai/Qwen3-4B-Q5_K_M",
     api_key="empty",
-    base_url="http://localhost:5020/v1",
+    base_url="http://localhost:5020/v1"
 )
 
 cloud_llm_deepseek_chat = LLM(
     model="deepseek-chat",
     api_key=os.getenv("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com/v1"
+)
+
+gemini_llm = LLM(
+    model="gemini/gemini-2.5-flash",
+    api_key=os.getenv("GEMINI_API_KEY"),
+    temperature=0.1,
 )
 
 cloud_llm_gpt4 = LLM(
@@ -76,24 +88,32 @@ class EditorTool(BaseTool):
     description: str = "Erstellt hochwertige Inhalte mit Template-Unterstützung."
     args_schema: Type[BaseModel] = EditorToolSchema
 
-    def _run(self, query: Any) -> str:
+    async def _run(self, query: Any) -> str:
         # Forward to researcher-poster agent
         researcher_path = "/Users/jgtcdghun/workspace/researcher-poster/agent"
         if not os.path.exists(researcher_path):
             return "Researcher-Poster nicht verfügbar."
 
         try:
-            cmd = [
+            cmd_str = " ".join([
                 "cd", researcher_path, "&&",
                 "/usr/local/opt/python@3.13/bin/python3.13", "cli.py",
                 "research", f'"{str(query)}"',
-                "--mode=auto", "--md-tools", "--max-duration", "20", "--verbose"
-            ]
-            result = subprocess.run(" ".join(cmd), shell=True, capture_output=True, text=True, timeout=1200)
-            if result.returncode == 0:
-                return result.stdout or "Inhalt erfolgreich erstellt."
+                "--mode=auto", "--md-tools", "--max-duration", "20", "--json"
+            ])
+            process = await asyncio.subprocess.create_subprocess_shell(
+                cmd_str,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=600
+            )
+            if process.returncode == 0:
+                return stdout.decode() or "Inhalt erfolgreich erstellt."
             else:
-                return f"Fehler: {result.stderr}"
+                return f"Fehler: {stderr.decode()}"
         except Exception as e:
             return f"Fehler: {str(e)}"
 
@@ -291,7 +311,7 @@ class ConversationManager:
         return "\n".join([f"{msg['role']}: {msg['content']}" for msg in recent])
 
 # Chat function for manager
-def chat_with_manager(user_message: str, conversation_manager: ConversationManager) -> str:
+async def chat_with_manager(user_message: str, conversation_manager: ConversationManager) -> str:
     conversation_manager.add_turn("user", user_message)
 
     # Analyze message type
@@ -325,7 +345,7 @@ def chat_with_manager(user_message: str, conversation_manager: ConversationManag
         )
         temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=False, verbose=True)
 
-    result = temp_crew.kickoff()
+    result = await temp_crew.kickoff_async()
     conversation_manager.add_turn("assistant", str(result))
     return str(result)
 
@@ -335,15 +355,19 @@ if not check_server_health():
     exit(1)
 
 # Simple chat interface
-conversation_manager = ConversationManager()
-print("🤖 Manager Chat Interface")
-print("Type 'quit' to exit")
-while True:
-    user_input = input("\n👤 You: ").strip()
-    if user_input.lower() in ['quit', 'exit']:
-        break
-    response = chat_with_manager(user_input, conversation_manager)
-    print(f"\n🤖 Manager: {response}")
+async def main_chat_loop():
+    conversation_manager = ConversationManager()
+    print("🤖 Manager Chat Interface")
+    print("Type 'quit' to exit")
+    while True:
+        user_input = input("\n👤 You: ").strip()
+        if user_input.lower() in ['quit', 'exit']:
+            break
+        response = await chat_with_manager(user_input, conversation_manager)
+        print(f"\n🤖 Manager: {response}")
+
+if __name__ == "__main__":
+    asyncio.run(main_chat_loop())
 
 # Alternative: Run the fixed crew
 # result = crew.kickoff()
