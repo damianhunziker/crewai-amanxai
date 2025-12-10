@@ -9,7 +9,7 @@
    ```
 
 2. Create a virtual environment:
-   ```bash
+   ```bash 
    /usr/local/opt/python@3.12/bin/python3.12 -m venv venv312
    source venv312/bin/activate
    ```
