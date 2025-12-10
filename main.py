@@ -12,9 +12,10 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel
 from crewai.mcp import MCPServerStdio
 from crewai.hooks import register_before_llm_call_hook, LLMCallHookContext
+from crewai.utilities.streaming import crewai_event_bus
 
-# Import Streaming Client
-from core.llm_streaming_client import streaming_client, LlamaStreamingClient, AsyncLlamaStreamingClient
+# Import Streaming Event Listener
+from core.streaming_event_listener import streaming_event_listener, print_streaming_tokens, collect_streaming_response
 
 load_dotenv()
 
@@ -23,6 +24,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # Postfix to append to every user input
 USER_INPUT_POSTFIX = os.getenv("USER_INPUT_POSTFIX", "")
+
+# Streaming configuration - enabled by default, can be disabled via env var
+DISABLE_STREAMING = os.getenv("DISABLE_STREAMING", "").lower() in ("true", "1", "yes", "on")
+STREAMING_ENABLED_BY_DEFAULT = not DISABLE_STREAMING
 
 # LLM Hook to append postfix to user messages at LLM call level
 def append_user_postfix(context: LLMCallHookContext) -> None:
@@ -48,30 +53,33 @@ os.environ.update({
 chatml_template = """<|im_start|>{role}
 {content}<|im_end|>"""
 
+# LLM Configuration with streaming support
 local_llm = LLM(
     model="openai/Qwen3-4B-Q5_K_M",
     api_key="empty",
-    base_url="http://localhost:5020/v1"
+    base_url="http://localhost:5020/v1",
+    stream=STREAMING_ENABLED_BY_DEFAULT  # Use streaming by default
 )
 
-cloud_llm_deepseek_chat = LLM(
-    model="deepseek-chat",
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com/v1"
-)
+# Cloud LLMs (optional - comment out if not needed)
+cloud_llm_deepseek_chat = None
+if os.getenv("DEEPSEEK_API_KEY"):
+    cloud_llm_deepseek_chat = LLM(
+        model="deepseek-chat",
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com/v1",
+        stream=True  # Enable streaming for cloud LLMs too
+    )
 
-gemini_llm = LLM(
-    model="gemini/gemini-2.5-flash",
-    api_key=os.getenv("GEMINI_API_KEY"),
-    temperature=0.1,
-)
+cloud_llm_gpt4 = None
+if os.getenv("OPENAI_API_KEY"):
+    cloud_llm_gpt4 = LLM(
+        model="gpt-4",
+        api_key=os.getenv("OPENAI_API_KEY"),
+        stream=True
+    )
 
-cloud_llm_gpt4 = LLM(
-    model="gpt-4",
-    api_key=os.getenv("OPENAI_API_KEY")
-)
-
-llm = local_llm
+llm = local_llm  # Use local LLM by default
 
 embedder = {
     "provider": "openai",
@@ -249,7 +257,7 @@ editor = Agent(
     goal="Erstelle hochwertige, plattformspezifische Inhalte für verschiedene Formate.",
     backstory="Du bist ein erfahrener Content-Editor mit Spezialisierung auf verschiedene Plattformen.",
     tools=[EditorTool()],
-    llm=llm,  # Cloud for creativity
+    llm=llm,
     verbose=True,
     allow_delegation=True,
     memory=False
@@ -333,59 +341,37 @@ crew = Crew(
     verbose=True
 )
 
-# Function to check server health with streaming support
+# Function to check server health
 def check_server_health(verbose: bool = True):
-    """Prüft Server-Health mit Streaming-Unterstützung"""
+    """Prüft Server-Health"""
     server_url = "http://localhost:5020"
     
-    # Check using streaming client first (more comprehensive)
     if verbose:
-        print("🔍 Prüfe Server-Health mit Streaming-Client...")
+        print("🔍 Prüfe Server-Health...")
     
     try:
-        # Check using streaming client
-        if streaming_client.check_server_health():
+        # Check health endpoint
+        response = requests.get(f"{server_url}/health", timeout=5)
+        if response.status_code != 200:
             if verbose:
-                print("✅ Streaming-Client: Server ist erreichbar und gesund")
-            
-            # Check models endpoint
-            response = requests.get(f"{server_url}/v1/models", timeout=5)
-            if response.status_code != 200:
-                if verbose:
-                    print(f"❌ Models endpoint nicht erreichbar: {response.status_code}")
-                return False
-            
-            models = response.json().get("data", [])
-            if verbose:
-                print(f"📊 Verfügbare Modelle: {[m['id'] for m in models]}")
-            
-            # Test streaming capability
-            if verbose:
-                print("🧪 Teste Streaming-Fähigkeit...")
-            
-            # Quick streaming test
-            test_prompt = "Hello"
-            try:
-                test_stream = streaming_client.stream_completion(test_prompt, max_tokens=2)
-                first_token = next(test_stream, None)
-                if first_token:
-                    if verbose:
-                        print(f"✅ Streaming funktioniert: '{first_token}'")
-                    return True
-                else:
-                    if verbose:
-                        print("⚠️  Streaming test: Keine Tokens empfangen")
-                    return True  # Server antwortet, aber kein Token
-            except Exception as e:
-                if verbose:
-                    print(f"⚠️  Streaming test fehlgeschlagen (Server antwortet trotzdem): {e}")
-                return True  # Server ist erreichbar, auch wenn Streaming fehlschlägt
-            
-            return True
-        else:
-            if verbose:
-                print("❌ Streaming-Client: Server nicht erreichbar")
+                print(f"❌ Health endpoint nicht erreichbar: {response.status_code}")
             return False
+        
+        if verbose:
+            print("✅ Server ist erreichbar")
+        
+        # Check models endpoint
+        response = requests.get(f"{server_url}/v1/models", timeout=5)
+        if response.status_code != 200:
+            if verbose:
+                print(f"❌ Models endpoint nicht erreichbar: {response.status_code}")
+            return False
+        
+        models = response.json().get("data", [])
+        if verbose:
+            print(f"📊 Verfügbare Modelle: {[m['id'] for m in models]}")
+        
+        return True
             
     except Exception as e:
         if verbose:
@@ -412,13 +398,15 @@ class ConversationManager:
         recent = self.conversation_history[-turns:]
         return "\n".join([f"{msg['role']}: {msg['content']}" for msg in recent])
 
-# Chat function for manager with optional streaming
-async def chat_with_manager(user_message: str, conversation_manager: ConversationManager, use_streaming: bool = False) -> str:
+# Chat function for manager with streaming support
+async def chat_with_manager(user_message: str, conversation_manager: ConversationManager, use_streaming: bool = STREAMING_ENABLED_BY_DEFAULT) -> str:
     conversation_manager.add_turn("user", user_message)
 
-    # Check if user wants streaming
-    if "stream" in user_message.lower() or "live" in user_message.lower():
-        use_streaming = True
+    # Check if user wants to disable streaming (default is enabled)
+    if "no stream" in user_message.lower() or "disable stream" in user_message.lower():
+        use_streaming = False
+    elif "force stream" in user_message.lower() or "enable stream" in user_message.lower():
+        use_streaming = True  # Explicitly enable even if disabled by env var
     
     # Analyze message type
     message_lower = user_message.lower()
@@ -456,24 +444,46 @@ async def chat_with_manager(user_message: str, conversation_manager: Conversatio
         print("\n🎯 Streaming-Antwort aktiviert...")
         print("🤖 Manager: ", end='', flush=True)
         
-        # Create a streaming response using the llama.cpp API directly
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": user_message}
-        ]
+        # Start the streaming event listener consumer
+        collected_tokens = []
         
-        full_response = ""
+        def token_callback(token):
+            print(token, end='', flush=True)
+            collected_tokens.append(token)
+        
+        streaming_event_listener.start_consumer(callback=token_callback)
+        
+        # Execute the task
         try:
-            for token in streaming_client.stream_chat(messages, max_tokens=500):
-                print(token, end='', flush=True)
-                full_response += token
+            result = await temp_crew.kickoff_async()
+            
+            # Wait for tokens to be processed
+            import time
+            timeout = 30  # 30 seconds timeout
+            start_time = time.time()
+            
+            while streaming_event_listener._consumer_thread and streaming_event_listener._consumer_thread.is_alive():
+                if time.time() - start_time > timeout:
+                    break
+                await asyncio.sleep(0.1)
+            
+            # Stop the consumer
+            streaming_event_listener.stop_consumer()
             
             print()  # New line after streaming
+            
+            # Use collected tokens if available, otherwise use result
+            if collected_tokens:
+                full_response = ''.join(collected_tokens)
+            else:
+                full_response = str(result)
+                
             conversation_manager.add_turn("assistant", full_response)
             return full_response
             
         except Exception as e:
             print(f"\n⚠️  Streaming fehlgeschlagen, verwende normale Antwort: {e}")
+            streaming_event_listener.stop_consumer()
             # Fallback to normal crew response
             result = await temp_crew.kickoff_async()
             conversation_manager.add_turn("assistant", str(result))
@@ -504,10 +514,13 @@ async def main_chat_loop():
         print(f"⚠️ Bitwarden unlock failed: {e} - continuing without Bitwarden features")
 
     conversation_manager = ConversationManager()
-    print("🤖 Manager Chat Interface mit Streaming-Unterstützung")
+    streaming_status = "AKTIVIERT" if STREAMING_ENABLED_BY_DEFAULT else "DEAKTIVIERT"
+    print(f"🤖 Manager Chat Interface (Streaming: {streaming_status})")
     print("Type 'quit' to exit")
-    print("Type 'stream' or 'live' in your message for streaming response")
+    print("Type 'no stream' in your message to disable streaming for that response")
     print("Type 'test streaming' to test streaming functionality")
+    if DISABLE_STREAMING:
+        print("💡 Streaming wurde via DISABLE_STREAMING env var deaktiviert")
     print("-" * 50)
     
     while True:
@@ -520,11 +533,21 @@ async def main_chat_loop():
             await test_streaming_demo()
             continue
         
-        # Check if streaming should be used
-        use_streaming = "stream" in user_input.lower() or "live" in user_input.lower()
-        
+        # Check if streaming should be disabled for this request
+        force_disable_streaming = "no stream" in user_input.lower() or "disable stream" in user_input.lower()
+        force_enable_streaming = "force stream" in user_input.lower() or "enable stream" in user_input.lower()
+
+        # Use streaming by default unless explicitly disabled or forced
+        use_streaming = STREAMING_ENABLED_BY_DEFAULT
+        if force_disable_streaming:
+            use_streaming = False
+        elif force_enable_streaming:
+            use_streaming = True
+
         if use_streaming:
             print(f"🎯 Streaming aktiviert für diese Anfrage...")
+        elif force_disable_streaming:
+            print(f"📝 Streaming deaktiviert für diese Anfrage...")
         
         response = await chat_with_manager(user_input, conversation_manager, use_streaming=use_streaming)
         
@@ -536,7 +559,7 @@ async def main_chat_loop():
 async def test_streaming_demo():
     """Demonstriert die Streaming-Funktionalität"""
     print("\n" + "=" * 60)
-    print("🧪 Llama.cpp Streaming Demo")
+    print("🧪 CrewAI Streaming Demo")
     print("=" * 60)
     
     # Check server health
@@ -547,56 +570,62 @@ async def test_streaming_demo():
     
     print("✅ Server ist erreichbar")
     
-    # Demo 1: Chat Streaming
-    print("\n1. Chat-Streaming Demo:")
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Explain quantum computing in simple terms."}
-    ]
-    
-    print(f"Prompt: {messages[1]['content']}")
+    # Demo: Simple streaming test using LLM directly
+    print("\n1. Direct LLM Streaming Demo:")
+    print("Prompt: 'Explain quantum computing in simple terms.'")
     print("Streaming response: ", end='', flush=True)
     
-    full_response = ""
+    # Create a simple task with streaming
+    test_task = Task(
+        description="Explain quantum computing in simple terms.",
+        expected_output="Simple explanation of quantum computing.",
+        agent=manager
+    )
+    
+    test_crew = Crew(agents=[manager], tasks=[test_task], embedder=embedder, memory=False, verbose=False)
+    
     try:
-        for token in streaming_client.stream_chat(messages, max_tokens=100):
+        # Start streaming consumer
+        collected_tokens = []
+        
+        def token_callback(token):
             print(token, end='', flush=True)
-            full_response += token
-        print(f"\n✅ Chat-Streaming erfolgreich ({len(full_response)} Zeichen)")
+            collected_tokens.append(token)
+        
+        streaming_event_listener.start_consumer(callback=token_callback)
+        
+        # Execute with timeout
+        import asyncio
+        import time
+        
+        async def execute_with_timeout():
+            return await test_crew.kickoff_async()
+        
+        try:
+            result = await asyncio.wait_for(execute_with_timeout(), timeout=30)
+            
+            # Wait for tokens
+            timeout = 10
+            start_time = time.time()
+            while streaming_event_listener._consumer_thread and streaming_event_listener._consumer_thread.is_alive():
+                if time.time() - start_time > timeout:
+                    break
+                await asyncio.sleep(0.1)
+            
+            streaming_event_listener.stop_consumer()
+            
+            if collected_tokens:
+                print(f"\n✅ Streaming erfolgreich ({len(collected_tokens)} Tokens)")
+            else:
+                print(f"\n⚠️  Keine Tokens empfangen, aber Antwort erhalten: {result[:100]}...")
+                
+        except asyncio.TimeoutError:
+            print("\n⚠️  Timeout bei Streaming-Demo")
+            streaming_event_listener.stop_consumer()
+            
     except Exception as e:
-        print(f"\n❌ Chat-Streaming fehlgeschlagen: {e}")
-    
-    # Demo 2: Completion Streaming
-    print("\n2. Completion-Streaming Demo:")
-    prompt = "The future of artificial intelligence will"
-    
-    print(f"Prompt: {prompt}")
-    print("Streaming: ", end='', flush=True)
-    
-    try:
-        for token in streaming_client.stream_completion(prompt, max_tokens=50):
-            print(token, end='', flush=True)
-        print("\n✅ Completion-Streaming erfolgreich")
-    except Exception as e:
-        print(f"\n❌ Completion-Streaming fehlgeschlagen: {e}")
-    
-    # Demo 3: Performance test
-    print("\n3. Performance Test:")
-    print("Messe Latenz bis zum ersten Token...")
-    
-    import time
-    start_time = time.time()
-    first_token_received = False
-    
-    try:
-        for token in streaming_client.stream_completion("Hello", max_tokens=5):
-            if not first_token_received:
-                first_token_time = time.time() - start_time
-                print(f"   Erstes Token nach: {first_token_time:.3f}s")
-                first_token_received = True
-                break
-    except Exception as e:
-        print(f"   ❌ Performance test fehlgeschlagen: {e}")
+        print(f"\n❌ Streaming fehlgeschlagen: {e}")
+        streaming_event_listener.stop_consumer()
     
     print("\n" + "=" * 60)
     print("🎉 Streaming Demo abgeschlossen")
@@ -605,7 +634,13 @@ async def test_streaming_demo():
 
 if __name__ == "__main__":
     # Check server health before starting
-    print("🔍 Starte CrewAI mit Streaming-Unterstützung...")
+    streaming_status = "AKTIVIERT" if STREAMING_ENABLED_BY_DEFAULT else "DEAKTIVIERT"
+    print(f"🔍 Starte CrewAI (Streaming: {streaming_status})...")
+
+    if DISABLE_STREAMING:
+        print("💡 Streaming wurde via DISABLE_STREAMING env var deaktiviert")
+        print("   Setze DISABLE_STREAMING=false um Streaming zu aktivieren")
+
     if not check_server_health():
         print("⚠️  Server-Probleme erkannt. Einige Features möglicherweise eingeschränkt.")
         print("   Starte Server mit: ./scripts/start_llama_optimized.sh")
@@ -614,7 +649,7 @@ if __name__ == "__main__":
         if response != 'y':
             print("Abgebrochen.")
             exit(1)
-    
+
     asyncio.run(main_chat_loop())
 
 # Alternative: Run the fixed crew
