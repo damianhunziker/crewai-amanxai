@@ -36,11 +36,13 @@ echo "   HTTP-Threads: 4"
 echo ""
 
 # Starte llama-server mit Streaming-Optimierungen
+# Wichtig: --ctx-size muss groß genug sein für CrewAI mit Tools (mindestens 4096)
+# --parallel 4 teilt den Context durch 4, also brauchen wir 4x mehr
 ./llama.cpp/build/bin/llama-server \
   -m "$MODEL_PATH" \
   --host 0.0.0.0 \
   --port 5020 \
-  --ctx-size 2048 \
+  --ctx-size 8192 \
   --threads $THREADS \
   --gpu-layers 0 \
   --cont-batching \

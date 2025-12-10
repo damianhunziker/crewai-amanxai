@@ -17,6 +17,15 @@ from crewai.utilities.streaming import crewai_event_bus
 # Import Streaming Event Listener
 from core.streaming_event_listener import streaming_event_listener, print_streaming_tokens, collect_streaming_response
 
+# Suppress litellm debug info
+try:
+    import litellm
+    litellm.suppress_debug_info = True
+    # Also disable litellm logging
+    os.environ['LITELLM_LOG'] = ''
+except ImportError:
+    pass
+
 load_dotenv()
 
 # Add current directory to path for relative imports
@@ -58,7 +67,7 @@ local_llm = LLM(
     model="openai/Qwen3-4B-Q5_K_M",
     api_key="empty",
     base_url="http://localhost:5020/v1",
-    stream=STREAMING_ENABLED_BY_DEFAULT  # Use streaming by default
+    stream=True  # Use streaming by default
 )
 
 # Cloud LLMs (optional - comment out if not needed)
@@ -414,30 +423,56 @@ async def chat_with_manager(user_message: str, conversation_manager: Conversatio
     editor_keywords = ["content", "artikel", "schreiben", "text", "inhalt", "erstellen", "wordpress", "forum", "social"]
     management_keywords = ["projekt", "management", "koordination", "planung", "bitwarden", "passwort", "api"]
 
-    if any(k in message_lower for k in research_keywords):
-        # Research task
-        task = Task(
-            description=f"Research request: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
-            expected_output="Comprehensive research report with findings and sources.",
-            agent=researcher
-        )
-        temp_crew = Crew(agents=[researcher], tasks=[task], embedder=embedder, memory=False, verbose=True)
-    elif any(k in message_lower for k in editor_keywords):
-        # Editor task
-        task = Task(
-            description=f"Content creation: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
-            expected_output="High-quality content for the requested format.",
-            agent=editor
-        )
-        temp_crew = Crew(agents=[editor], tasks=[task], embedder=embedder, memory=False, verbose=True)
-    else:
-        # Management task
-        task = Task(
-            description=f"Management request: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
-            expected_output="Strategic management response with recommendations.",
-            agent=manager
-        )
-        temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=False, verbose=True)
+    # Temporarily set agent verbose to False to reduce debug output
+    original_researcher_verbose = researcher.verbose
+    original_editor_verbose = editor.verbose
+    original_manager_verbose = manager.verbose
+    researcher.verbose = False
+    editor.verbose = False
+    manager.verbose = False
+    
+    # Temporarily disable MCP servers to prevent debug output
+    original_researcher_mcps = researcher.mcps
+    original_editor_mcps = editor.mcps
+    original_manager_mcps = manager.mcps
+    researcher.mcps = []
+    editor.mcps = []
+    manager.mcps = []
+    
+    try:
+        if any(k in message_lower for k in research_keywords):
+            # Research task
+            task = Task(
+                description=f"Research request: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
+                expected_output="Comprehensive research report with findings and sources.",
+                agent=researcher
+            )
+            temp_crew = Crew(agents=[researcher], tasks=[task], embedder=embedder, memory=False, verbose=False)
+        elif any(k in message_lower for k in editor_keywords):
+            # Editor task
+            task = Task(
+                description=f"Content creation: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
+                expected_output="High-quality content for the requested format.",
+                agent=editor
+            )
+            temp_crew = Crew(agents=[editor], tasks=[task], embedder=embedder, memory=False, verbose=False)
+        else:
+            # Management task
+            task = Task(
+                description=f"Management request: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
+                expected_output="Strategic management response with recommendations.",
+                agent=manager
+            )
+            temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=False, verbose=False)
+    finally:
+        # Restore original verbose settings
+        researcher.verbose = original_researcher_verbose
+        editor.verbose = original_editor_verbose
+        manager.verbose = original_manager_verbose
+        # Restore original MCP settings
+        researcher.mcps = original_researcher_mcps
+        editor.mcps = original_editor_mcps
+        manager.mcps = original_manager_mcps
 
     if use_streaming:
         # Use streaming for the response
