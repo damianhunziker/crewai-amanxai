@@ -13,6 +13,9 @@ from pydantic import BaseModel
 from crewai.mcp import MCPServerStdio
 from crewai.hooks import register_before_llm_call_hook, LLMCallHookContext
 
+# Import Streaming Client
+from core.llm_streaming_client import streaming_client, LlamaStreamingClient, AsyncLlamaStreamingClient
+
 load_dotenv()
 
 # Add current directory to path for relative imports
@@ -38,14 +41,15 @@ os.environ.update({
     'NO_PROXY': 'localhost,127.0.0.1',
     'HTTP_PROXY': '',
     'HTTPS_PROXY': '',
-    'OPENAI_API_BASE': 'http://localhost:5020/v1'
+    'OPENAI_API_BASE': 'http://localhost:5020/v1',
+    'NANGO_SECRET_KEY': os.getenv('NANGO_SECRET_KEY', 'dummy-key-change-in-production')
 })
 
 chatml_template = """<|im_start|>{role}
 {content}<|im_end|>"""
 
 local_llm = LLM(
-    model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
+    model="openai/Qwen3-4B-Q5_K_M",
     api_key="empty",
     base_url="http://localhost:5020/v1"
 )
@@ -137,6 +141,18 @@ class EditorTool(BaseTool):
 from core.bitwarden_session_manager import initialize_bitwarden_session
 from core.bitwarden_cli_integration import BitwardenCLIIntegration
 
+# Import LLM API Integration
+from core.llm_api_manager import DynamicAPIManager
+
+# Auto-Setup Bitwarden Session bei Bedarf
+try:
+    from core.bitwarden_session_manager import initialize_bitwarden_session
+    if not initialize_bitwarden_session():
+        print("⚠️ Bitwarden Session nicht verfügbar - einige Features eingeschränkt")
+        print("💡 Führe aus: python scripts/setup_bitwarden_session.py")
+except Exception as e:
+    print(f"⚠️ Bitwarden Auto-Setup fehlgeschlagen: {e}")
+
 # Autonomous Bitwarden CLI Tool (using proper integration)
 class AutonomousBitwardenCLITool(BaseTool):
     name: str = "autonomous_bitwarden_cli"
@@ -185,7 +201,9 @@ class AutonomousBitwardenCLITool(BaseTool):
                     tool_logger.info(f"CLI stderr: {stderr}")
                     if stdout:
                         items = json.loads(stdout)
-                        result = f"Items: {[item['name'] for item in items]}"
+                        # Include both name and ID in the result
+                        item_list = [f"{item.get('name', 'Unknown')} (ID: {item.get('id', 'N/A')})" for item in items]
+                        result = f"Items: {item_list}"
                     else:
                         result = "No items found."
                 except Exception as e:
@@ -195,13 +213,21 @@ class AutonomousBitwardenCLITool(BaseTool):
             elif action == "get" and len(parts) > 2 and parts[1] == "item":
                 item_id = parts[2]
                 item = bw_client.get_item(item_id)
-                result = f"Item: {item}" if item else "Item not found."
+                if item:
+                    item_name = item.get('name', 'Unknown')
+                    result = f"Item (ID: {item_id}): {item_name} - {item}"
+                else:
+                    result = f"Item with ID {item_id} not found."
                 tool_logger.info(f"Get item result: {result}")
                 return result
             elif action == "search" and len(parts) > 2 and parts[1] == "items":
                 term = " ".join(parts[2:])
                 items = bw_client.search_items(term)
-                result = f"Found {len(items)} items matching '{term}'"
+                if items:
+                    item_list = [f"{item.get('name', 'Unknown')} (ID: {item.get('id', 'N/A')})" for item in items]
+                    result = f"Found {len(items)} items matching '{term}': {item_list}"
+                else:
+                    result = f"No items found matching '{term}'"
                 tool_logger.info(f"Search result: {result}")
                 return result
             else:
@@ -212,6 +238,10 @@ class AutonomousBitwardenCLITool(BaseTool):
             result = f"Error: {str(e)}"
             tool_logger.error(f"Exception: {str(e)}")
             return result
+
+# Initialize LLM API Manager
+dynamic_api_manager = DynamicAPIManager()
+llm_api_tools = dynamic_api_manager.get_tools_for_agent("manager")
 
 # Create agents
 editor = Agent(
@@ -252,9 +282,9 @@ researcher = Agent(
 
 manager = Agent(
     role="Vyftec Manager",
-    goal="Koordiniere alle Agenten und verwalte Kundenprojekte effizient.",
-    backstory="Du bist der zentrale Manager der Vyftec Webagentur. Du koordinierst alle spezialisierten Agenten. Verwende Tools im korrekten Format: Action: tool_name\nAction Input: {\"param\": \"value\"}",
-    tools=[AutonomousBitwardenCLITool()],  # Primary tool for passwords
+    goal="Koordiniere alle Agenten und verwalte Kundenprojekte effizient. Du kannst jetzt jede API verwenden, die über OpenAPI-Specs verfügbar ist, ohne dass spezifischer Code dafür geschrieben werden muss.",
+    backstory="Du bist der zentrale Manager der Vyftec Webagentur mit Zugriff auf dynamische LLM-gesteuerte API-Tools. Du koordinierst alle spezialisierten Agenten und kannst universelle API-Integrationen nutzen.",
+    tools=[AutonomousBitwardenCLITool()] + llm_api_tools,  # Combine existing and new LLM API tools
     mcps=[
         MCPServerStdio(
             command="/Users/jgtcdghun/.nvm/versions/node/v20.19.2/bin/node",
@@ -303,35 +333,63 @@ crew = Crew(
     verbose=True
 )
 
-# Function to check server health
-def check_server_health():
+# Function to check server health with streaming support
+def check_server_health(verbose: bool = True):
+    """Prüft Server-Health mit Streaming-Unterstützung"""
     server_url = "http://localhost:5020"
+    
+    # Check using streaming client first (more comprehensive)
+    if verbose:
+        print("🔍 Prüfe Server-Health mit Streaming-Client...")
+    
     try:
-        # Check models endpoint
-        response = requests.get(f"{server_url}/v1/models", timeout=5)
-        if response.status_code != 200:
-            print(f"❌ Server not healthy: {response.status_code}")
-            return False
-        models = response.json().get("data", [])
-        print(f"✅ Server healthy. Available models: {[m['id'] for m in models]}")
-        
-        # Test embedding via proxy
-        test_text = "Hello world"
-        embed_response = requests.post(
-            f"{server_url}/v1/embeddings",
-            json={"input": test_text, "model": "bge-m3"},
-            timeout=10
-        )
-        if embed_response.status_code == 200:
-            data = embed_response.json()
-            embedding = data["data"][0]["embedding"]
-            print(f"✅ Embedding test successful. Dimension: {len(embedding)}")
+        # Check using streaming client
+        if streaming_client.check_server_health():
+            if verbose:
+                print("✅ Streaming-Client: Server ist erreichbar und gesund")
+            
+            # Check models endpoint
+            response = requests.get(f"{server_url}/v1/models", timeout=5)
+            if response.status_code != 200:
+                if verbose:
+                    print(f"❌ Models endpoint nicht erreichbar: {response.status_code}")
+                return False
+            
+            models = response.json().get("data", [])
+            if verbose:
+                print(f"📊 Verfügbare Modelle: {[m['id'] for m in models]}")
+            
+            # Test streaming capability
+            if verbose:
+                print("🧪 Teste Streaming-Fähigkeit...")
+            
+            # Quick streaming test
+            test_prompt = "Hello"
+            try:
+                test_stream = streaming_client.stream_completion(test_prompt, max_tokens=2)
+                first_token = next(test_stream, None)
+                if first_token:
+                    if verbose:
+                        print(f"✅ Streaming funktioniert: '{first_token}'")
+                    return True
+                else:
+                    if verbose:
+                        print("⚠️  Streaming test: Keine Tokens empfangen")
+                    return True  # Server antwortet, aber kein Token
+            except Exception as e:
+                if verbose:
+                    print(f"⚠️  Streaming test fehlgeschlagen (Server antwortet trotzdem): {e}")
+                return True  # Server ist erreichbar, auch wenn Streaming fehlschlägt
+            
             return True
         else:
-            print(f"❌ Embedding test failed: {embed_response.status_code} - {embed_response.text}")
+            if verbose:
+                print("❌ Streaming-Client: Server nicht erreichbar")
             return False
+            
     except Exception as e:
-        print(f"❌ Server check failed: {e}")
+        if verbose:
+            print(f"❌ Server check failed: {e}")
         return False
 
 # Conversation manager for chat
@@ -354,10 +412,14 @@ class ConversationManager:
         recent = self.conversation_history[-turns:]
         return "\n".join([f"{msg['role']}: {msg['content']}" for msg in recent])
 
-# Chat function for manager
-async def chat_with_manager(user_message: str, conversation_manager: ConversationManager) -> str:
+# Chat function for manager with optional streaming
+async def chat_with_manager(user_message: str, conversation_manager: ConversationManager, use_streaming: bool = False) -> str:
     conversation_manager.add_turn("user", user_message)
 
+    # Check if user wants streaming
+    if "stream" in user_message.lower() or "live" in user_message.lower():
+        use_streaming = True
+    
     # Analyze message type
     message_lower = user_message.lower()
     research_keywords = ["recherche", "bericht", "analyse", "studie", "untersuchung", "informationen", "daten"]
@@ -389,28 +451,170 @@ async def chat_with_manager(user_message: str, conversation_manager: Conversatio
         )
         temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=False, verbose=True)
 
-    result = await temp_crew.kickoff_async()
-    conversation_manager.add_turn("assistant", str(result))
-    return str(result)
+    if use_streaming:
+        # Use streaming for the response
+        print("\n🎯 Streaming-Antwort aktiviert...")
+        print("🤖 Manager: ", end='', flush=True)
+        
+        # Create a streaming response using the llama.cpp API directly
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": user_message}
+        ]
+        
+        full_response = ""
+        try:
+            for token in streaming_client.stream_chat(messages, max_tokens=500):
+                print(token, end='', flush=True)
+                full_response += token
+            
+            print()  # New line after streaming
+            conversation_manager.add_turn("assistant", full_response)
+            return full_response
+            
+        except Exception as e:
+            print(f"\n⚠️  Streaming fehlgeschlagen, verwende normale Antwort: {e}")
+            # Fallback to normal crew response
+            result = await temp_crew.kickoff_async()
+            conversation_manager.add_turn("assistant", str(result))
+            return str(result)
+    else:
+        # Normal crew response
+        result = await temp_crew.kickoff_async()
+        conversation_manager.add_turn("assistant", str(result))
+        return str(result)
 
 # Check server before running
 if not check_server_health():
     print("Aborting due to server issues.")
     exit(1)
 
-# Simple chat interface
+# Simple chat interface with streaming support
 async def main_chat_loop():
+    # Auto-unlock Bitwarden vault at chat start
+    print("🔐 Attempting to unlock Bitwarden vault...")
+    try:
+        from core.bitwarden_cli_integration import BitwardenCLIIntegration
+        bw_client = BitwardenCLIIntegration()
+        if bw_client.unlock():
+            print("✅ Bitwarden vault unlocked successfully")
+        else:
+            print("⚠️ Could not unlock Bitwarden vault - some features may be limited")
+    except Exception as e:
+        print(f"⚠️ Bitwarden unlock failed: {e} - continuing without Bitwarden features")
+
     conversation_manager = ConversationManager()
-    print("🤖 Manager Chat Interface")
+    print("🤖 Manager Chat Interface mit Streaming-Unterstützung")
     print("Type 'quit' to exit")
+    print("Type 'stream' or 'live' in your message for streaming response")
+    print("Type 'test streaming' to test streaming functionality")
+    print("-" * 50)
+    
     while True:
         user_input = input("\n👤 You: ").strip()
         if user_input.lower() in ['quit', 'exit']:
             break
-        response = await chat_with_manager(user_input, conversation_manager)
-        print(f"\n🤖 Manager: {response}")
+        
+        # Special command: test streaming
+        if user_input.lower() == 'test streaming':
+            await test_streaming_demo()
+            continue
+        
+        # Check if streaming should be used
+        use_streaming = "stream" in user_input.lower() or "live" in user_input.lower()
+        
+        if use_streaming:
+            print(f"🎯 Streaming aktiviert für diese Anfrage...")
+        
+        response = await chat_with_manager(user_input, conversation_manager, use_streaming=use_streaming)
+        
+        # Only print if not already streamed
+        if not use_streaming:
+            print(f"\n🤖 Manager: {response}")
+
+# Streaming demo function
+async def test_streaming_demo():
+    """Demonstriert die Streaming-Funktionalität"""
+    print("\n" + "=" * 60)
+    print("🧪 Llama.cpp Streaming Demo")
+    print("=" * 60)
+    
+    # Check server health
+    if not check_server_health(verbose=False):
+        print("❌ Server nicht erreichbar. Bitte starte llama-server.")
+        print("   Startbefehl: ./scripts/start_llama_optimized.sh")
+        return
+    
+    print("✅ Server ist erreichbar")
+    
+    # Demo 1: Chat Streaming
+    print("\n1. Chat-Streaming Demo:")
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Explain quantum computing in simple terms."}
+    ]
+    
+    print(f"Prompt: {messages[1]['content']}")
+    print("Streaming response: ", end='', flush=True)
+    
+    full_response = ""
+    try:
+        for token in streaming_client.stream_chat(messages, max_tokens=100):
+            print(token, end='', flush=True)
+            full_response += token
+        print(f"\n✅ Chat-Streaming erfolgreich ({len(full_response)} Zeichen)")
+    except Exception as e:
+        print(f"\n❌ Chat-Streaming fehlgeschlagen: {e}")
+    
+    # Demo 2: Completion Streaming
+    print("\n2. Completion-Streaming Demo:")
+    prompt = "The future of artificial intelligence will"
+    
+    print(f"Prompt: {prompt}")
+    print("Streaming: ", end='', flush=True)
+    
+    try:
+        for token in streaming_client.stream_completion(prompt, max_tokens=50):
+            print(token, end='', flush=True)
+        print("\n✅ Completion-Streaming erfolgreich")
+    except Exception as e:
+        print(f"\n❌ Completion-Streaming fehlgeschlagen: {e}")
+    
+    # Demo 3: Performance test
+    print("\n3. Performance Test:")
+    print("Messe Latenz bis zum ersten Token...")
+    
+    import time
+    start_time = time.time()
+    first_token_received = False
+    
+    try:
+        for token in streaming_client.stream_completion("Hello", max_tokens=5):
+            if not first_token_received:
+                first_token_time = time.time() - start_time
+                print(f"   Erstes Token nach: {first_token_time:.3f}s")
+                first_token_received = True
+                break
+    except Exception as e:
+        print(f"   ❌ Performance test fehlgeschlagen: {e}")
+    
+    print("\n" + "=" * 60)
+    print("🎉 Streaming Demo abgeschlossen")
+    print("=" * 60)
+    print("\nTipp: Verwende 'stream' oder 'live' in deiner Nachricht für Streaming-Antworten")
 
 if __name__ == "__main__":
+    # Check server health before starting
+    print("🔍 Starte CrewAI mit Streaming-Unterstützung...")
+    if not check_server_health():
+        print("⚠️  Server-Probleme erkannt. Einige Features möglicherweise eingeschränkt.")
+        print("   Starte Server mit: ./scripts/start_llama_optimized.sh")
+        print("   Trotzdem fortfahren? (y/n): ", end='')
+        response = input().strip().lower()
+        if response != 'y':
+            print("Abgebrochen.")
+            exit(1)
+    
     asyncio.run(main_chat_loop())
 
 # Alternative: Run the fixed crew

@@ -1,0 +1,134 @@
+{
+  "github": {
+    "id": "github",
+    "name": "GitHub API",
+    "category": "development",
+    "description": "Repository und Issue Management",
+    "base_url": "https://api.github.com",
+    "openapi_spec_url": null,
+    "auth_type": "api_key",
+    "policies": {
+      "rate_limit_per_hour": 5000,
+      "max_concurrent_calls": 10,
+      "timeout_seconds": 30,
+      "retry_attempts": 3
+    },
+    "access_control": {
+      "allowed_agents": [
+        "manager",
+        "researcher"
+      ],
+      "allowed_users": [
+        "admin"
+      ],
+      "requires_approval": false
+    },
+    "metadata": {
+      "requester": "System Admin",
+      "requested_date": "2024-01-01",
+      "approved_by": "System Admin",
+      "approved_date": "2024-01-01",
+      "tags": [
+        "version-control",
+        "collaboration",
+        "open-source"
+      ]
+    },
+    "statistics": {
+      "total_calls": 0,
+      "successful_calls": 0,
+      "failed_calls": 0,
+      "last_used": null,
+      "average_response_time": 0,
+      "status": "active"
+    }
+  },
+  "notion": {
+    "id": "notion",
+    "name": "Notion API",
+    "category": "productivity",
+    "description": "Datenbank und Dokumenten-Management",
+    "base_url": "https://api.notion.com",
+    "openapi_spec_url": null,
+    "auth_type": "api_key",
+    "policies": {
+      "rate_limit_per_hour": 1000,
+      "max_concurrent_calls": 5,
+      "timeout_seconds": 30,
+      "retry_attempts": 2
+    },
+    "access_control": {
+      "allowed_agents": [
+        "manager"
+      ],
+      "allowed_users": [
+        "admin"
+      ],
+      "requires_approval": false
+    },
+    "metadata": {
+      "requester": "System Admin",
+      "requested_date": "2024-01-01",
+      "approved_by": "System Admin",
+      "approved_date": "2024-01-01",
+      "tags": [
+        "documentation",
+        "project-management",
+        "collaboration"
+      ]
+    },
+    "statistics": {
+      "total_calls": 0,
+      "successful_calls": 0,
+      "failed_calls": 0,
+      "last_used": null,
+      "average_response_time": 0,
+      "status": "active"
+    }
+  },
+  "openai": {
+    "id": "openai",
+    "name": "OpenAI API",
+    "category": "ai",
+    "description": "KI-Modelle und Text-Generierung",
+    "base_url": "https://api.openai.com",
+    "openapi_spec_url": null,
+    "auth_type": "api_key",
+    "policies": {
+      "rate_limit_per_hour": 100,
+      "max_concurrent_calls": 3,
+      "timeout_seconds": 60,
+      "retry_attempts": 1
+    },
+    "access_control": {
+      "allowed_agents": [
+        "manager",
+        "researcher",
+        "editor"
+      ],
+      "allowed_users": [
+        "admin"
+      ],
+      "requires_approval": false
+    },
+    "metadata": {
+      "requester": "System Admin",
+      "requested_date": "2024-01-01",
+      "approved_by": "System Admin",
+      "approved_date": "2024-01-01",
+      "tags": [
+        "ai",
+        "text-generation",
+        "nlp"
+      ]
+    },
+    "statistics": {
+      "total_calls": 0,
+      "successful_calls": 0,
+      "failed_calls": 0,
+      "last_used": null,
+      "average_response_time": 0,
+      "status": "active"
+    }
+  }
+}

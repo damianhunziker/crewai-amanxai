@@ -1,0 +1,2 @@
+#!/bin/bash
+export BW_SESSION="vp4s2QnKiRMRhHgXuapqdDg8LqYAd4tzJGDFJbYKRyPX/A2x0SUUBU0JQu3bnRT63qFrByoOU1OS+RMi+B7TlA=="

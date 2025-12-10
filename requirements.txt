@@ -2,5 +2,6 @@ crewai[google-genai]
 python-dotenv
 requests
 pydantic
+pydantic-settings
 google-genai
 crewai-tools[mcp]
