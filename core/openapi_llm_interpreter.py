@@ -65,7 +65,7 @@ WICHTIG:
 """
 
         try:
-            llm_response = self.llm.generate(prompt)
+            llm_response = self.llm.complete(prompt)
             parsed_response = self._parse_llm_response(llm_response)
 
             if parsed_response['confidence'] < 0.7:

@@ -88,7 +88,7 @@ if os.getenv("OPENAI_API_KEY"):
         stream=True
     )
 
-llm = local_llm  # Use local LLM by default
+llm = cloud_llm_deepseek_chat  # Use local LLM by default
 
 embedder = {
     "provider": "openai",
@@ -160,6 +160,9 @@ from core.bitwarden_cli_integration import BitwardenCLIIntegration
 
 # Import LLM API Integration
 from core.llm_api_manager import DynamicAPIManager
+
+# Import Fragment-Based API Tool
+from core.fragment_based_api_tool import get_fragment_based_api_tool
 
 # Auto-Setup Bitwarden Session bei Bedarf
 try:
@@ -260,12 +263,15 @@ class AutonomousBitwardenCLITool(BaseTool):
 dynamic_api_manager = DynamicAPIManager()
 llm_api_tools = dynamic_api_manager.get_tools_for_agent("manager")
 
+# Initialize Fragment-Based API Tool
+fragment_api_tool = get_fragment_based_api_tool()
+
 # Create agents
 editor = Agent(
     role="Content Editor Specialist",
     goal="Erstelle hochwertige, plattformspezifische Inhalte für verschiedene Formate.",
     backstory="Du bist ein erfahrener Content-Editor mit Spezialisierung auf verschiedene Plattformen.",
-    tools=[EditorTool()],
+    tools=[AutonomousBitwardenCLITool()] + llm_api_tools + [fragment_api_tool],
     llm=llm,
     verbose=True,
     allow_delegation=True,
@@ -299,9 +305,9 @@ researcher = Agent(
 
 manager = Agent(
     role="Vyftec Manager",
-    goal="Koordiniere alle Agenten und verwalte Kundenprojekte effizient. Du kannst jetzt jede API verwenden, die über OpenAPI-Specs verfügbar ist, ohne dass spezifischer Code dafür geschrieben werden muss.",
-    backstory="Du bist der zentrale Manager der Vyftec Webagentur mit Zugriff auf dynamische LLM-gesteuerte API-Tools. Du koordinierst alle spezialisierten Agenten und kannst universelle API-Integrationen nutzen.",
-    tools=[AutonomousBitwardenCLITool()] + llm_api_tools,  # Combine existing and new LLM API tools
+    goal="Antworte kurz und prägnant auf User-Anfragen. Beantworte nur die gestellte Frage, erfinde nichts hinzu und schmücke nicht aus. Verwende Tools wenn nötig, aber halte Antworten auf das Wesentliche beschränkt.",
+    backstory="Du bist ein effizienter Manager der Vyftec Webagentur. Du antwortest direkt und präzise, ohne unnötige Ausschmückungen. Du nutzt Tools nur wenn notwendig und gibst klare, kurze Antworten.",
+    tools=[AutonomousBitwardenCLITool()] + llm_api_tools + [fragment_api_tool],  # Combine existing and new LLM API tools
     mcps=[
         MCPServerStdio(
             command="/Users/jgtcdghun/.nvm/versions/node/v20.19.2/bin/node",
@@ -318,7 +324,7 @@ manager = Agent(
     ],
     llm=llm,
     verbose=True,
-    allow_delegation=True,
+    allow_delegation=False,
     memory=False
 )
 
@@ -337,8 +343,8 @@ editor_task = Task(
 )
 
 management_task = Task(
-    description="Koordiniere das Projekt und stelle sicher, dass alle Anforderungen erfüllt sind.",
-    expected_output="Projektzusammenfassung mit nächsten Schritten.",
+    description="Antworte kurz und prägnant auf die User-Anfrage. Beantworte nur die gestellte Frage, erfinde nichts hinzu und schmücke nicht aus. Verwende Tools wenn nötig, aber halte Antworten auf das Wesentliche beschränkt. Maximal 3-5 Sätze.",
+    expected_output="Kurze, präzise Antwort auf die User-Anfrage.",
     agent=manager
 )
 
@@ -457,10 +463,10 @@ async def chat_with_manager(user_message: str, conversation_manager: Conversatio
             )
             temp_crew = Crew(agents=[editor], tasks=[task], embedder=embedder, memory=False, verbose=False)
         else:
-            # Management task
+            # Management task - kurze, prägnante Antwort
             task = Task(
-                description=f"Management request: {user_message}\n\nContext: {conversation_manager.get_recent_context()}",
-                expected_output="Strategic management response with recommendations.",
+                description=f"Antworte kurz und prägnant auf: {user_message}\n\nRegeln:\n1. Beantworte nur die gestellte Frage\n2. Erfinde nichts hinzu\n3. Schmücke nicht aus\n4. Maximal 3-5 Sätze\n5. Verwende Tools nur wenn nötig\n\nContext: {conversation_manager.get_recent_context()}",
+                expected_output="Kurze, präzise Antwort auf die User-Anfrage.",
                 agent=manager
             )
             temp_crew = Crew(agents=[manager], tasks=[task], embedder=embedder, memory=False, verbose=False)

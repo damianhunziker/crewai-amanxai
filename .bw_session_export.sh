@@ -1,2 +1,2 @@
 #!/bin/bash
-export BW_SESSION="PHC+dC+x8XqKruhZYkuA2R5D1mPBYxFSesn9yyuDtRotD74CJd3cF8rICtRphGwejrwkFzZAlhvnz35p+yKWJA=="
+export BW_SESSION="7DRDHXtkZMZ4xilJJTkjgzbZxKaU0RLSRPSvblCV9elsBLmAAo3TJviQNaD7yzPe1trbvVdBk/0VQ4eHBYIkTA=="
