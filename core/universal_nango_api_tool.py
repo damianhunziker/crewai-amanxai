@@ -53,12 +53,73 @@ class UniversalAPITool(BaseTool):
         self.tyk_url = settings.tyk_base_url
 
         # Provider-Mapping für bessere User-Experience
-        self.provider_aliases = {
+        self.provider_aliases = {}
+        # Mapping von api_id zu listen_path
+        self.provider_listen_paths = {}
+        
+        # Dynamisch verfügbare APIs von Tyk laden
+        self._load_tyk_apis()
+        
+        # Fallback für bekannte Provider, falls Tyk nicht erreichbar
+        if not self.provider_aliases:
+            self.provider_aliases = self._get_fallback_aliases()
+            logger.warning("Tyk API nicht erreichbar, verwende Fallback-Aliases")
+        else:
+            logger.info(f"✅ Dynamisch {len(self.provider_aliases)} Provider von Tyk geladen")
+
+    def _load_tyk_apis(self):
+        """Lädt verfügbare APIs von Tyk Gateway"""
+        try:
+            import requests
+            tyk_admin_url = self.tyk_url.replace('://', '://admin.')
+            # Alternativ: Tyk Admin API auf Port 8080 mit Admin-Key
+            # Verwende den bekannten Admin-Key
+            headers = {'x-tyk-authorization': '97158e409154e3fe7c3d5b4e9afbb1e9'}
+            response = requests.get(f"{self.tyk_url}/tyk/apis", headers=headers, timeout=5)
+            if response.status_code == 200:
+                apis = response.json()
+                for api in apis:
+                    api_id = api.get('api_id')
+                    name = api.get('name', '').lower()
+                    slug = api.get('slug', '')
+                    listen_path = api.get('proxy', {}).get('listen_path', '')
+                    if api_id:
+                        # Primärer Alias ist der api_id
+                        self.provider_aliases[api_id] = api_id
+                        # Zusätzliche Aliases basierend auf Name und Slug
+                        if name:
+                            self.provider_aliases[name] = api_id
+                        if slug:
+                            self.provider_aliases[slug] = api_id
+                        # Extrahiere Basisnamen aus api_id (z.B. 'wordpress' aus 'wordpress-proxy-2')
+                        # Einfache Logik: Nimm den Teil vor dem ersten '-'
+                        if '-' in api_id:
+                            base_id = api_id.split('-')[0]
+                            if base_id and base_id != api_id:
+                                self.provider_aliases[base_id] = api_id
+                                # Auch ohne Bindestrich
+                                self.provider_aliases[base_id.replace('-', '')] = api_id
+                        # Speichere listen_path
+                        if listen_path:
+                            # Normalisiere listen_path (entferne führende/trailing Slashes)
+                            listen_path = listen_path.rstrip('/')
+                            self.provider_listen_paths[api_id] = listen_path
+                logger.info(f"Geladene APIs von Tyk: {list(set(self.provider_aliases.values()))}")
+                logger.debug(f"Aliases: {self.provider_aliases}")
+                logger.debug(f"Listen paths: {self.provider_listen_paths}")
+            else:
+                logger.warning(f"Tyk API Response {response.status_code}: {response.text}")
+        except Exception as e:
+            logger.warning(f"Konnte Tyk APIs nicht laden: {e}")
+
+    def _get_fallback_aliases(self):
+        """Fallback-Aliases für bekannte Provider"""
+        return {
             # GitHub (inkl. PAT)
             'gh': 'github',
             'git': 'github',
             'github': 'github',
-            'github-pat': 'github',  # ✅ GitHub PAT hinzugefügt
+            'github-pat': 'github',
             'ghpat': 'github',
             # Notion
             'notion': 'notion',
@@ -93,10 +154,12 @@ class UniversalAPITool(BaseTool):
             'twilio': 'twilio',
             'sms': 'twilio',
             'zoom': 'zoom',
-            'meet': 'zoom'
+            'meet': 'zoom',
+            # Content Management
+            'wordpress': 'wordpress',
+            'wp': 'wordpress',
+            'cms': 'wordpress'
         }
-
-        logger.info("✅ Universelles API Tool initialisiert")
 
     def _run(self, provider: str, endpoint: str, method: str = "GET",
               params: Optional[Dict[str, Any]] = None,
@@ -128,8 +191,16 @@ class UniversalAPITool(BaseTool):
             if description:
                 logger.info(f"📝 Beschreibung: {description}")
 
+            # Bestimme listen_path für diese API
+            listen_path = self.provider_listen_paths.get(resolved_provider, f'/proxy/{resolved_provider}')
+            # Stelle sicher, dass listen_path mit / beginnt und nicht mit / endet (außer es ist root)
+            if not listen_path.startswith('/'):
+                listen_path = '/' + listen_path
+            # Entferne trailing slash
+            listen_path = listen_path.rstrip('/')
+            
             # Tyk-Proxy-URL konstruieren
-            proxy_url = f"{self.tyk_url}/proxy/{resolved_provider}{endpoint}"
+            proxy_url = f"{self.tyk_url}{listen_path}{endpoint}"
 
             # Tyk-Header für Target-API
             headers = {
@@ -233,7 +304,8 @@ class UniversalAPITool(BaseTool):
             'salesforce': 'Enterprise CRM, Sales, Service Cloud',
             'stripe': 'Zahlungsabwicklung, Subscriptions, Billing',
             'twilio': 'SMS, Voice, Video, Kommunikation',
-            'zoom': 'Video-Konferenzen, Meetings, Webinars'
+            'zoom': 'Video-Konferenzen, Meetings, Webinars',
+            'wordpress': 'Content-Management, Posts, Pages, Media, Comments'
         }
 
         return descriptions.get(provider, f'API-Integration für {provider}')
@@ -270,6 +342,21 @@ class UniversalAPITool(BaseTool):
                 {'endpoint': '/images/generations', 'method': 'POST', 'description': 'Bilder generieren'},
                 {'endpoint': '/embeddings', 'method': 'POST', 'description': 'Embeddings erstellen'},
                 {'endpoint': '/audio/transcriptions', 'method': 'POST', 'description': 'Audio transkribieren'}
+            ],
+            'wordpress': [
+                {'endpoint': '/posts', 'method': 'GET', 'description': 'Posts auflisten'},
+                {'endpoint': '/posts', 'method': 'POST', 'description': 'Neuen Post erstellen'},
+                {'endpoint': '/posts/{id}', 'method': 'GET', 'description': 'Post abrufen'},
+                {'endpoint': '/posts/{id}', 'method': 'PUT', 'description': 'Post aktualisieren'},
+                {'endpoint': '/posts/{id}', 'method': 'DELETE', 'description': 'Post löschen'},
+                {'endpoint': '/pages', 'method': 'GET', 'description': 'Pages auflisten'},
+                {'endpoint': '/pages', 'method': 'POST', 'description': 'Neue Page erstellen'},
+                {'endpoint': '/media', 'method': 'GET', 'description': 'Media-Dateien auflisten'},
+                {'endpoint': '/media', 'method': 'POST', 'description': 'Media-Datei hochladen'},
+                {'endpoint': '/comments', 'method': 'GET', 'description': 'Kommentare auflisten'},
+                {'endpoint': '/users', 'method': 'GET', 'description': 'Benutzer auflisten'},
+                {'endpoint': '/categories', 'method': 'GET', 'description': 'Kategorien auflisten'},
+                {'endpoint': '/tags', 'method': 'GET', 'description': 'Tags auflisten'}
             ]
         }
 

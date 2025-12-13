@@ -64,7 +64,9 @@ chatml_template = """<|im_start|>{role}
 
 # LLM Configuration with streaming support
 local_llm = LLM(
-    model="openai/Qwen3-4B-Q5_K_M",
+    #model="openai/Qwen3-4B-Q5_K_M",
+    model="openai/Llama-3.2-3B-Instruct-Q4_K_M",
+   
     api_key="empty",
     base_url="http://localhost:5020/v1",
     stream=True  # Use streaming by default
